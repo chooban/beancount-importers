@@ -11,6 +11,7 @@ from uabean.importers import binance, ibkr, kraken, monobank
 import beancount_importers.import_monzo as import_monzo
 import beancount_importers.import_revolut as import_revolut
 import beancount_importers.import_wise as import_wise
+import beancount_importers.import_nationwide as import_nationwide
 
 
 def get_importer_config(type, account, currency, importer_params):
@@ -39,6 +40,13 @@ def get_importer_config(type, account, currency, importer_params):
             **common,
             module="beancount_import.source.generic_importer_source_beangulp",
             importer=import_revolut.get_importer(account, currency),
+            emoji="💵"
+        )
+    elif type == "nationwide":
+        return dict(
+            **common,
+            module="beancount_import.source.generic_importer_source_beangulp",
+            importer=import_nationwide.get_importer(account, currency),
             emoji="💵"
         )
     elif type == "ibkr":
