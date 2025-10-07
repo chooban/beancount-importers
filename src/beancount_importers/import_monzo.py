@@ -26,15 +26,14 @@ UNCATEGORIZED_EXPENSES_ACCOUNT = "Expenses:FIXME"
 
 def get_importer(account, currency, importer_params):
     class MonzoImporter(Importer):
-        header = 1 
-        date = Date(1, frmt="%d/%m/%Y")
-        tx_type = Column(3)
-        narration = Column(14)
-        payee = Column(4)
-        amount = Amount(7)
-        currency = Column(8)
-        category = Column(6)
-        link = Column(0)
+        date = Date("Date", frmt="%d/%m/%Y")
+        tx_type = Column("Type")
+        narration = Column("Description")
+        payee = Column("Name")
+        amount = Amount("Amount")
+        currency = Column("Currency")
+        category = Column("Category")
+        link = Column("Transaction ID")
         
         names = True
 
@@ -47,7 +46,7 @@ def get_importer(account, currency, importer_params):
         def categorize(self, params, txn, row):
             payee = txn.payee
             description = txn.narration
-            monzo_category = row[6]
+            monzo_category: str = getattr(row, "category", "")
 
             if description == "Standing order" or description.startswith("Direct debit"):
                 txn = txn._replace(tags=txn.tags.union(frozenset(['recurring'])))
