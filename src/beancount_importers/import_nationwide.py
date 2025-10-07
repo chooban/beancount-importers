@@ -58,7 +58,7 @@ def get_importer(account, currency, importer_params = None):
 
             
         def finalize(self, txn, row):
-            return self.categorize(importer_params, txn, row)
+            return self.categorize(self.params, txn, row)
         
     return NationwideReader(account=account, currency=currency)
 
