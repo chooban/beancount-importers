@@ -27,7 +27,6 @@ UNCATEGORIZED_EXPENSES_ACCOUNT = "Expenses:FIXME"
 def get_importer(account, currency, importer_params):
     class MonzoImporter(Importer):
         date = Date("Date", frmt="%d/%m/%Y")
-        tx_type = Column("Type")
         narration = Column("Description")
         payee = Column("Name")
         amount = Amount("Amount")
@@ -77,6 +76,9 @@ def get_importer(account, currency, importer_params):
             return txn
             
         def finalize(self, txn, row):
+            # Don't need the active card checks 
+            if txn.postings[0].units.number == 0:
+                return None
             return self.categorize(self.params, txn, row)
     
     return MonzoImporter(account=account, currency=currency)
