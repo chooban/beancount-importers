@@ -49,6 +49,10 @@ def get_importer(account, currency, importer_params):
 
             if description == "Standing order" or description.startswith("Direct debit"):
                 txn = txn._replace(tags=txn.tags.union(frozenset(['recurring'])))
+           
+            tags = [t[1:] for t in description.split(" ") if t.startswith('#')]
+            if len(tags) > 0:
+                txn = txn._replace(tags=txn.tags.union(frozenset(tags)))
                 
             posting_account = None
             if txn.postings[0].units.number <= 0:
