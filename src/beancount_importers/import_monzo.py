@@ -67,7 +67,7 @@ def get_importer(account, currency, importer_params):
                         )
             else:
                 if payee == "Savings Pot" or payee == "Savings Monzo Pot":
-                    posting_account = "Assets:Monzo:Savings"
+                    posting_account = "Assets:Monzo:Personal:Savings"
     
             if not posting_account:
                 posting_account = UNCATEGORIZED_EXPENSES_ACCOUNT
