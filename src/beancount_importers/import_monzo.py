@@ -40,7 +40,7 @@ def get_importer(account, currency, importer_params):
         my_account = account
       
         def identify(self, filepath: str) -> bool:
-            return True 
+            return filepath.endswith("csv") 
 
         def categorize(self, params, txn, row):
             payee = txn.payee
@@ -66,8 +66,9 @@ def get_importer(account, currency, importer_params):
                             monzo_category, UNCATEGORIZED_EXPENSES_ACCOUNT
                         )
             else:
-                if payee == "Savings Pot" or payee == "Savings Monzo Pot":
-                    posting_account = "Assets:Monzo:Personal:Savings"
+                if not params.get("ignore_bank_categories"):
+                    if payee == "Savings Pot" or payee == "Savings Monzo Pot":
+                        posting_account = "Assets:Monzo:Personal:Savings"
     
             if not posting_account:
                 posting_account = UNCATEGORIZED_EXPENSES_ACCOUNT

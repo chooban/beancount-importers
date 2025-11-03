@@ -32,7 +32,7 @@ def get_importer(account, currency, importer_params = None):
         my_account = account
         
         def identify(self, filepath: str) -> bool:
-            return True 
+            return filepath.endswith("csv") 
             
         def categorize(self, params, txn, row):
             payee = txn.payee
