@@ -20,7 +20,7 @@ ACCOUNT_PAYEES = {
     "Expenses:Travel": [],
     "Expenses:EatingOut": [],
     "Expenses:Taxes": [],
-    "Assets:Monzo:Savings": ["Savings Pot"],
+    # "Assets:Monzo:Savings": ["Savings Pot"],
     "Assets:Physical:Cash": ["ATM"],
     "Expenses:Gifts": [],
     "Expenses:Work": [],
