@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""
-monzo_csv.py  –  dump all Monzo transactions to CSV via the public API
-Tested with Python 3.8+
-"""
+from contextlib import nullcontext
 import csv
 import os
+import pprint
 import sys
 import time
 from typing import Any
@@ -15,6 +13,7 @@ from dateutil import parser
 from dotenv import load_dotenv
 
 import requests
+import click
 
 load_dotenv(override=True)
 
@@ -99,7 +98,7 @@ def start_oauth():
         "redirect_uri": REDIRECT_URI,
         "code": auth_code,
     }
-    
+
     r = requests.post(url, data=data)
     r.raise_for_status()
     js = r.json()
@@ -149,15 +148,18 @@ def get_pots(token: str, account_id: str) -> list[dict[str, Any]]:
     return accounts
 
 
-def fetch_all_transactions(token: str, account: dict[str, Any]):
+def fetch_all_transactions(
+    token: str,
+    account: dict[str, Any],
+    start_date: str,
+    end_date: str | None = None,
+):
     """Download every transaction using pagination."""
 
     # Pagination is broken. Need to just keep going from the date of the last
     # transaction in each request until nothing is returned
-    txns, start_date = (
-        [],
-        (dt.now(timezone.utc) - timedelta(10)).astimezone().isoformat(),
-    )
+    txns = []
+
     while True:
         params = {
             "account_id": account.get("id"),
@@ -165,6 +167,9 @@ def fetch_all_transactions(token: str, account: dict[str, Any]):
             "expand[]": "merchant",
             "since": start_date,
         }
+        if end_date is not None:
+            params["before"] = end_date
+
         print(f"Fetching transactions for {account["id"]} from {start_date}")
         data = api_get("/transactions", token, params)
         if data is None or len(data["transactions"]) == 0:
@@ -189,12 +194,13 @@ def extract_payee(txn) -> str:
         return txn["counterparty"]["name"]
     else:
         return "UNKNOWN"
-        
+
+
 def extract_narration(txn) -> str:
     if txn["notes"] != "":
         return txn["notes"]
-    elif txn["metadata"] and txn["metadata"].get("pot_id", None) is not None:
-        return "Round up"
+    # elif txn["metadata"] and txn["metadata"].get("pot_id", None) is not None:
+    #     return "Round up"
     return txn["description"]
 
 
@@ -219,19 +225,21 @@ TX_FIELDS = [
     },
     {
         "key": "Category",
-        "fn": lambda x: " ".join(
-            x["category"].split("_")
-        ).capitalize(),
+        "fn": lambda x: " ".join(x["category"].split("_")).capitalize(),
     },
 ]
 
 
-def write_csv(transactions, pots, basedir, filename=None):
+def write_csv(transactions, pots, filename: str | None = None):
     """Write list of transaction dicts to CSV."""
 
     rows = []
     for t in transactions:
         r = {}
+        
+        if "decline_reason" in t:
+            continue
+
         for k in TX_FIELDS:
             r[k["key"]] = k["fn"](t)
 
@@ -239,14 +247,15 @@ def write_csv(transactions, pots, basedir, filename=None):
 
         if r["Name"].startswith("pot_"):
             r["Name"] = pots[r["Name"]]["name"]
-            
+
         if r["Name"] == "UNKNOWN":
             print(t)
 
-    if filename is None:
-        filename = f"MonzoExport_{rows[1]["Date"].replace('/', '-')}_{rows[-1]["Date"].replace('/', '-')}.csv"
-
-    with open(os.path.join(basedir, filename), "x", newline="", encoding="utf-8") as fh:
+    with (
+        open(filename, "x", newline="", encoding="utf-8")
+        if filename
+        else nullcontext(sys.stdout)
+    ) as fh:
         writer = csv.DictWriter(
             fh, fieldnames=[x["key"] for x in TX_FIELDS], extrasaction="ignore"
         )
@@ -256,7 +265,43 @@ def write_csv(transactions, pots, basedir, filename=None):
     print(f"\n✅  {len(transactions)} transactions written to {filename}")
 
 
-def main():
+@click.command("txn")
+@click.option("--txid", "txid")
+def txn(txid: str|None) -> None:
+    if txid is None:
+        return
+    access, refresh = load_tokens()
+    if not access:
+        access = start_oauth()
+    elif not refresh:
+        sys.exit("Refresh token missing – delete .monzo_token and rerun.")
+    else:
+        # ensure token is alive
+        access = refresh_access_token(refresh)
+        
+    tx = api_get(f"/transactions/{txid}", access)
+    
+    pprint.pprint(tx)
+
+@click.command()
+@click.option("--start-date", "start_date")
+@click.option("--end-date", "end_date")
+@click.option("--save/--no-save", default=False)
+@click.option("--out-dir", "out_dir")
+def download(
+    start_date: str | None, end_date: str | None, save: bool, out_dir: str | None
+):
+
+    if start_date is None:
+        start_date = (dt.now(timezone.utc) - timedelta(10)).astimezone().isoformat()
+    else:
+        parsed_start_date = dt.strptime(start_date, "%Y-%m-%d")
+        start_date = parsed_start_date.astimezone().isoformat()
+
+    if end_date is not None:
+        parsed_end_date = dt.strptime(end_date, "%Y-%m-%d")
+        end_date = parsed_end_date.astimezone().isoformat()
+
     access, refresh = load_tokens()
     if not access:
         access = start_oauth()
@@ -271,25 +316,40 @@ def main():
     for a in accounts:
         pots_list.extend(get_pots(access, a["id"]))
 
-    print(pots_list)
     pots = {}
     for p in pots_list:
         pots[p["id"]] = p
 
-
     for a in accounts:
         if a["id"] in ACCOUNTS.keys():
-            txns = fetch_all_transactions(access, a)
+            txns = fetch_all_transactions(
+                access,
+                a,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if len(txns) == 0:
+                continue
+
+            first_date = parser.parse(txns[0]["created"]).strftime("%Y-%m-%d")
+            last_date = parser.parse(txns[-1]["created"]).strftime("%Y-%m-%d")
+            filename = f"MonzoExport_{ACCOUNTS[a["id"]]}_{first_date}_{last_date}.csv"
+
             write_csv(
                 txns,
                 pots,
-                os.path.join(
-                    os.getcwd(),
-                    OUTPUT_DIRECTORY,
-                    ACCOUNTS[a["id"]]
+                (
+                    os.path.join(
+                        os.getcwd(),
+                        out_dir if out_dir else "",
+                        ACCOUNTS[a["id"]] if out_dir else "",
+                        filename,
+                    )
+                    if save
+                    else None
                 ),
             )
 
 
 if __name__ == "__main__":
-    main()
+    download()
