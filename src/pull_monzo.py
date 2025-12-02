@@ -159,7 +159,6 @@ def fetch_all_transactions(
     # Pagination is broken. Need to just keep going from the date of the last
     # transaction in each request until nothing is returned
     txns = []
-
     while True:
         params = {
             "account_id": account.get("id"),
@@ -296,6 +295,8 @@ def download(
         start_date = (dt.now(timezone.utc) - timedelta(10)).astimezone().isoformat()
     else:
         parsed_start_date = dt.strptime(start_date, "%Y-%m-%d")
+        if parsed_start_date > dt.now():
+            sys.exit("Error: start_date cannot be in the future.")
         start_date = parsed_start_date.astimezone().isoformat()
 
     if end_date is not None:
