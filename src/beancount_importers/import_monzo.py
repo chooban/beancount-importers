@@ -24,36 +24,27 @@ TRANSACTIONS_CLASSIFIED_BY_ID = {}
 UNCATEGORIZED_EXPENSES_ACCOUNT = "Expenses:FIXME"
 
 
-def get_importer(account, currency, importer_params):
-    class MonzoImporter(Importer):
-        date = Date("Date", frmt="%d/%m/%Y")
-        narration = Column("Description")
-        payee = Column("Name")
-        amount = Amount("Amount")
-        currency = Column("Currency")
-        category = Column("Category")
-        link = Column("Transaction ID")
-        
+def get_importer(account, currency, importer_params=None):
+    params = importer_params if importer_params is not None else {}
+
+    class MonzoBase(Importer):
         names = True
 
-        params = importer_params if importer_params is not None else {}
-        my_account = account
-      
         def identify(self, filepath: str) -> bool:
-            return filepath.endswith("csv") 
+            return filepath.endswith("csv")
 
-        def categorize(self, params, txn, row):
+        def categorize(self, txn, row):
             payee = txn.payee
             description = txn.narration
             monzo_category: str = getattr(row, "category", "")
 
             if description == "Standing order" or description.startswith("Direct debit"):
                 txn = txn._replace(tags=txn.tags.union(frozenset(['recurring'])))
-           
+
             tags = [t[1:] for t in description.split(" ") if t.startswith('#')]
             if len(tags) > 0:
                 txn = txn._replace(tags=txn.tags.union(frozenset(tags)))
-                
+
             posting_account = None
             if txn.postings[0].units.number <= 0:
                 # Expenses
@@ -69,24 +60,75 @@ def get_importer(account, currency, importer_params):
                 if not params.get("ignore_bank_categories"):
                     if payee == "Savings Pot" or payee == "Savings Monzo Pot":
                         posting_account = "Assets:Monzo:Personal:Savings"
-    
+
             if not posting_account:
                 posting_account = UNCATEGORIZED_EXPENSES_ACCOUNT
 
             txn.postings.append(
                 data.Posting(posting_account, -txn.postings[0].units, None, None, None, None)
             )
-            
+
             txn.meta['source_desc'] = description
             return txn
-            
+
+        def _effective_narration(self, row):
+            return row.narration
+
         def finalize(self, txn, row):
-            # Don't need the active card checks 
+            # Don't need the active card checks
             if txn.postings[0].units.number == 0:
                 return None
-            return self.categorize(self.params, txn, row)
-    
-    return MonzoImporter(account=account, currency=currency)
+            narration = self._effective_narration(row)
+            if narration and narration != txn.narration:
+                txn = txn._replace(narration=narration)
+            return self.categorize(txn, row)
+
+    class MonzoImporter(MonzoBase):
+        date = Date("Date", frmt="%d/%m/%Y")
+        narration = Column("Description")
+        payee = Column("Name")
+        amount = Amount("Amount")
+        currency = Column("Currency")
+        category = Column("Category")
+        link = Column("Transaction ID")
+
+    class MonzoStatementImporter(MonzoBase):
+        date = Date("Date", frmt="%d/%m/%Y")
+        narration = Column("Description")
+        notes = Column("Notes and #tags")
+        payee = Column("Name")
+        amount = Amount("Amount")
+        currency = Column("Currency")
+        category = Column("Category")
+        link = Column("Transaction ID")
+
+        def _effective_narration(self, row):
+            return row.notes or row.narration
+
+    csv_importer = MonzoImporter(account=account, currency=currency)
+    statement_importer = MonzoStatementImporter(account=account, currency=currency)
+
+    class MultiFormatMonzoImporter(beangulp.Importer):
+        def _select(self, filepath):
+            with open(filepath, encoding="utf8") as fd:
+                header = fd.readline()
+            if "Notes and #tags" in header:
+                return statement_importer
+            return csv_importer
+
+        def identify(self, filepath: str) -> bool:
+            return self._select(filepath).identify(filepath)
+
+        def account(self, filepath):
+            return account
+
+        def date(self, filepath):
+            return self._select(filepath).date(filepath)
+
+        def extract(self, filepath, existing):
+            return self._select(filepath).extract(filepath, existing)
+
+    return MultiFormatMonzoImporter()
 
 if __name__ == "__main__":
     ingest = beangulp.Ingest([get_importer("Assets:Monzo:Cash", "GBP", {})], [])
