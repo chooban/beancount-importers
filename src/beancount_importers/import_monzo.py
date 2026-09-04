@@ -1,3 +1,6 @@
+import csv
+from datetime import datetime
+
 from beancount.core import data
 
 import beangulp
@@ -32,6 +35,36 @@ def get_importer(account, currency, importer_params=None):
 
         def identify(self, filepath: str) -> bool:
             return filepath.endswith("csv")
+
+        def extract(self, filepath, existing):
+            entries = super().extract(filepath, existing)
+            if not entries:
+                return entries
+            source_descs = {}
+            for entry in existing or []:
+                if not isinstance(entry, data.Transaction):
+                    continue
+                for posting in entry.postings:
+                    meta = posting.meta
+                    if not meta:
+                        continue
+                    source_desc = meta.get("source_desc")
+                    if source_desc is None:
+                        continue
+                    for link in entry.links:
+                        source_descs.setdefault(link, source_desc)
+            if not source_descs:
+                return entries
+            out = []
+            for entry in entries:
+                if isinstance(entry, data.Transaction):
+                    for link in entry.links:
+                        source_desc = source_descs.get(link)
+                        if source_desc is not None and entry.narration != source_desc:
+                            entry = entry._replace(narration=source_desc)
+                        break
+                out.append(entry)
+            return out
 
         def categorize(self, txn, row):
             payee = txn.payee
@@ -110,10 +143,28 @@ def get_importer(account, currency, importer_params=None):
 
     class MultiFormatMonzoImporter(beangulp.Importer):
         def _select(self, filepath):
-            with open(filepath, encoding="utf8") as fd:
-                header = fd.readline()
-            if "Notes and #tags" in header:
-                return statement_importer
+            with open(filepath, encoding="utf8", newline="") as fd:
+                reader = csv.reader(fd)
+                try:
+                    header = next(reader)
+                except StopIteration:
+                    return csv_importer
+                names = {name.strip(): index for index, name in enumerate(header)}
+                if "Notes and #tags" not in names:
+                    return csv_importer
+                date_col = names.get("Date")
+                if date_col is None:
+                    return csv_importer
+                for row in reader:
+                    if date_col < len(row):
+                        raw = row[date_col].strip()
+                        if raw:
+                            try:
+                                year = datetime.strptime(raw, "%d/%m/%Y").year
+                            except ValueError:
+                                continue
+                            if year >= 2026:
+                                return statement_importer
             return csv_importer
 
         def identify(self, filepath: str) -> bool:
